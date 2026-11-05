@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sistem Absensi Wajah Real-Time</title>
+  
+  <!-- Tailwind CSS & Lucide Icons -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- MediaPipe Face Mesh & Camera Utils -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+  <style>
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="p-2 bg-indigo-600 rounded-lg">
+          <i data-lucide="scan-face" class="w-6 h-6 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-wide">FaceID AI Attendance</h1>
+          <p class="text-xs text-slate-400">Sistem Absensi Wajah Real-Time</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2">
+        <span id="statusBadge" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+          <span class="w-2 h-2 rounded-full bg-amber-400 mr-2 animate-pulse"></span>
+          Kamera Standby
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Layout -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-6">
+    
+    <!-- Left Column: Camera Feed -->
+    <section class="lg:col-span-7 flex flex-col space-y-4">
+      <div class="relative w-full aspect-video bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl flex items-center justify-center">
+        <!-- Hidden Video for Processing -->
+        <video id="webcam" class="hidden" playsinline></video>
+        
+        <!-- Output Overlay Canvas -->
+        <canvas id="outputCanvas" class="w-full h-full object-cover transform -scale-x-100"></canvas>
+        
+        <!-- Placeholder Screen before Camera Starts -->
+        <div id="startOverlay" class="absolute inset-0 bg-slate-950/90 backdrop-blur flex flex-col items-center justify-center p-6 text-center z-10">
+          <div class="w-16 h-16 bg-indigo-600/20 rounded-full flex items-center justify-center text-indigo-400 mb-4 animate-bounce">
+            <i data-lucide="camera" class="w-8 h-8"></i>
+          </div>
+          <h2 class="text-xl font-bold mb-2">Akses Kamera Diperlukan</h2>
+          <p class="text-sm text-slate-400 max-w-sm mb-6">Tekan tombol di bawah ini untuk memulai kamera dan pengenalan wajah otomatis.</p>
+          <button id="startBtn" onclick="initCamera()" class="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl shadow-lg shadow-indigo-600/30 transition duration-200 flex items-center space-x-2">
+            <i data-lucide="power" class="w-5 h-5"></i>
+            <span>Mulai Kamera & Audio</span>
+          </button>
+        </div>
+
+        <!-- Detection Status Overlay Badge -->
+        <div id="detectionInfo" class="hidden absolute top-4 left-4 glass-panel px-4 py-2 rounded-xl flex items-center space-x-3">
+          <div id="statusDot" class="w-3 h-3 rounded-full bg-slate-400"></div>
+          <div>
+            <div id="detectedName" class="font-bold text-sm">Menunggu Wajah...</div>
+            <div id="similarityScore" class="text-xs text-slate-400">Kemiripan: -</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Registration Form -->
+      <div class="glass-panel p-5 rounded-2xl">
+        <h3 class="text-md font-bold mb-3 flex items-center space-x-2">
+          <i data-lucide="user-plus" class="w-5 h-5 text-indigo-400"></i>
+          <span>Daftarkan Anggota Baru</span>
+        </h3>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input type="text" id="personName" placeholder="Masukkan Nama Lengkap..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-indigo-500">
+          <button onclick="registerFace()" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 font-semibold rounded-xl text-sm flex items-center justify-center space-x-2 transition">
+            <i data-lucide="save" class="w-4 h-4"></i>
+            <span>Simpan Wajah</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Attendance Logs & Registered Users -->
+    <section class="lg:col-span-5 flex flex-col space-y-4">
+      
+      <!-- Attendance Records Table -->
+      <div class="glass-panel p-5 rounded-2xl flex-1 flex flex-col min-h-[300px]">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-md font-bold flex items-center space-x-2">
+            <i data-lucide="clipboard-check" class="w-5 h-5 text-indigo-400"></i>
+            <span>Riwayat Absensi</span>
+          </h3>
+          <button onclick="exportCSV()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg border border-slate-700 flex items-center space-x-1">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            <span>Ekspor CSV</span>
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto max-h-[250px] pr-1">
+          <table class="w-full text-left text-xs">
+            <thead class="text-slate-400 border-b border-slate-800 sticky top-0 bg-slate-900">
+              <tr>
+                <th class="py-2 px-2">Nama</th>
+                <th class="py-2 px-2">Waktu</th>
+                <th class="py-2 px-2 text-right">Status</th>
+              </tr>
+            </thead>
+            <tbody id="attendanceTable" class="divide-y divide-slate-800/50">
+              <tr>
+                <td colspan="3" class="text-center py-8 text-slate-500">Belum ada data absensi hari ini.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Registered Faces List -->
+      <div class="glass-panel p-5 rounded-2xl">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-md font-bold flex items-center space-x-2">
+            <i data-lucide="users" class="w-5 h-5 text-indigo-400"></i>
+            <span>Wajah Terdaftar (<span id="userCount">0</span>)</span>
+          </h3>
+          <button onclick="clearAllFaces()" class="text-xs text-rose-400 hover:underline">Reset Semua</button>
+        </div>
+        <div id="facesList" class="flex flex-wrap gap-2 max-h-[150px] overflow-y-auto">
+          <span class="text-xs text-slate-500">Belum ada wajah terdaftar.</span>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    let faceMesh;
+    let camera;
+    let registeredFaces = JSON.parse(localStorage.getItem('registeredFaces') || '[]');
+    let attendanceLogs = JSON.parse(localStorage.getItem('attendanceLogs') || '[]');
+    let currentLandmarks = null;
+    let lastAttendanceMap = {}; // Cooldown map
+    let audioCtx = null;
+
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('outputCanvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    // Synthesis Beep Sound for Success
+    function playChime() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15); // A5
+      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    }
+
+    // Standardize 3D Landmarks for Matching
+    function extractEmbedding(landmarks) {
+      const nose = landmarks[1];
+      const leftEye = landmarks[33];
+      const rightEye = landmarks[263];
+      const scale = Math.hypot(rightEye.x - leftEye.x, rightEye.y - leftEye.y, rightEye.z - leftEye.z) || 1;
+
+      return landmarks.map(p => ({
+        x: (p.x - nose.x) / scale,
+        y: (p.y - nose.y) / scale,
+        z: (p.z - nose.z) / scale
+      }));
+    }
+
+    function calculateDistance(emb1, emb2) {
+      let sum = 0;
+      for (let i = 0; i < emb1.length; i++) {
+        const dx = emb1[i].x - emb2[i].x;
+        const dy = emb1[i].y - emb2[i].y;
+        const dz = emb1[i].z - emb2[i].z;
+        sum += dx*dx + dy*dy + dz*dz;
+      }
+      return Math.sqrt(sum);
+    }
+
+    async function initCamera() {
+      document.getElementById('startOverlay').classList.add('hidden');
+      document.getElementById('detectionInfo').classList.remove('hidden');
+      
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      faceMesh = new FaceMesh({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+      });
+
+      faceMesh.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+      });
+
+      faceMesh.onResults(onResults);
+
+      camera = new Camera(videoElement, {
+        onFrame: async () => {
+          await faceMesh.send({ image: videoElement });
+        },
+        width: 640,
+        height: 480
+      });
+
+      camera.start();
+      renderRegisteredFaces();
+      renderAttendanceTable();
+    }
+
+    function onResults(results) {
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+        currentLandmarks = landmarks;
+
+        // Draw Bounding Box
+        let minX = 1, minY = 1, maxX = 0, maxY = 0;
+        landmarks.forEach(p => {
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+        });
+
+        const x = minX * canvasElement.width;
+        const y = minY * canvasElement.height;
+        const w = (maxX - minX) * canvasElement.width;
+        const h = (maxY - minY) * canvasElement.height;
+
+        // Match with Registered Database
+        const currentEmb = extractEmbedding(landmarks);
+        let bestMatch = null;
+        let lowestDist = Infinity;
+
+        registeredFaces.forEach(person => {
+          const dist = calculateDistance(currentEmb, person.embedding);
+          if (dist < lowestDist) {
+            lowestDist = dist;
+            bestMatch = person;
+          }
+        });
+
+        const THRESHOLD = 3.8;
+        const isMatch = bestMatch && lowestDist < THRESHOLD;
+        const label = isMatch ? bestMatch.name : 'UNKNOWN';
+
+        // Draw Bounding Box UI
+        canvasCtx.strokeStyle = isMatch ? '#10B981' : '#F59E0B';
+        canvasCtx.lineWidth = 3;
+        canvasCtx.strokeRect(x, y, w, h);
+
+        canvasCtx.fillStyle = isMatch ? '#10B981' : '#F59E0B';
+        canvasCtx.fillRect(x, y - 25, Math.max(w, 100), 25);
+        canvasCtx.fillStyle = '#FFFFFF';
+        canvasCtx.font = 'bold 12px sans-serif';
+        canvasCtx.fillText(label, x + 5, y - 8);
+
+        // Update Info Badge
+        document.getElementById('detectedName').innerText = label;
+        document.getElementById('similarityScore').innerText = `Skor: ${lowestDist.toFixed(2)}`;
+        document.getElementById('statusDot').className = `w-3 h-3 rounded-full ${isMatch ? 'bg-emerald-400' : 'bg-amber-400'}`;
+
+        // Process Auto Attendance
+        if (isMatch) {
+          triggerAttendance(bestMatch.name);
+        }
+      } else {
+        currentLandmarks = null;
+        document.getElementById('detectedName').innerText = 'Menunggu Wajah...';
+        document.getElementById('similarityScore').innerText = 'Kemiripan: -';
+        document.getElementById('statusDot').className = 'w-3 h-3 rounded-full bg-slate-400';
+      }
+
+      canvasCtx.restore();
+    }
+
+    function registerFace() {
+      const nameInput = document.getElementById('personName');
+      const name = nameInput.value.trim();
+
+      if (!name) return alert('Silakan masukkan nama terlebih dahulu!');
+      if (!currentLandmarks) return alert('Wajah belum terdeteksi di kamera!');
+
+      const embedding = extractEmbedding(currentLandmarks);
+      registeredFaces.push({ id: Date.now(), name, embedding });
+      localStorage.setItem('registeredFaces', JSON.stringify(registeredFaces));
+
+      nameInput.value = '';
+      renderRegisteredFaces();
+      alert(`Wajah "${name}" berhasil didaftarkan!`);
+    }
+
+    function triggerAttendance(name) {
+      const now = Date.now();
+      const lastCheckin = lastAttendanceMap[name] || 0;
+      
+      // Cooldown 30 Detik
+      if (now - lastCheckin > 30000) {
+        lastAttendanceMap[name] = now;
+        const timeStr = new Date().toLocaleTimeString('id-ID');
+        const dateStr = new Date().toLocaleDateString('id-ID');
+
+        attendanceLogs.unshift({ name, time: timeStr, date: dateStr });
+        localStorage.setItem('attendanceLogs', JSON.stringify(attendanceLogs));
+
+        playChime();
+        renderAttendanceTable();
+      }
+    }
+
+    function renderAttendanceTable() {
+      const tbody = document.getElementById('attendanceTable');
+      if (attendanceLogs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="3" class="text-center py-8 text-slate-500">Belum ada data absensi hari ini.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = attendanceLogs.map(log => `
+        <tr class="hover:bg-slate-800/30 transition">
+          <td class="py-2.5 px-2 font-semibold text-slate-200">${log.name}</td>
+          <td class="py-2.5 px-2 text-slate-400">${log.time}</td>
+          <td class="py-2.5 px-2 text-right">
+            <span class="inline-block px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold">
+              HADIR
+            </span>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderRegisteredFaces() {
+      const container = document.getElementById('facesList');
+      document.getElementById('userCount').innerText = registeredFaces.length;
+
+      if (registeredFaces.length === 0) {
+        container.innerHTML = `<span class="text-xs text-slate-500">Belum ada wajah terdaftar.</span>`;
+        return;
+      }
+
+      container.innerHTML = registeredFaces.map(person => `
+        <div class="flex items-center space-x-2 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-xl text-xs">
+          <span>${person.name}</span>
+          <button onclick="deleteFace(${person.id})" class="text-rose-400 hover:text-rose-300">
+            <i data-lucide="x" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      `).join('');
+      lucide.createIcons();
+    }
+
+    function deleteFace(id) {
+      registeredFaces = registeredFaces.filter(p => p.id !== id);
+      localStorage.setItem('registeredFaces', JSON.stringify(registeredFaces));
+      renderRegisteredFaces();
+    }
+
+    function clearAllFaces() {
+      if (confirm('Hapus seluruh daftar wajah?')) {
+        registeredFaces = [];
+        localStorage.removeItem('registeredFaces');
+        renderRegisteredFaces();
+      }
+    }
+
+    function exportCSV() {
+      if (attendanceLogs.length === 0) return alert('Tidak ada data absensi untuk diekspor.');
+
+      let csv = 'Nama,Tanggal,Waktu,Status\n';
+      attendanceLogs.forEach(log => {
+        csv += `"${log.name}","${log.date}","${log.time}","HADIR"\n`;
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `rekap_absensi_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+    }
+  </script>
+</body>
+</html>
